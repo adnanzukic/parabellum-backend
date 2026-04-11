@@ -14,7 +14,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🔥 GLOBALNI STORAGE ZA COOKIES
+session_cookies = {}
+
 async def izvuci_stream(url: str):
+    global session_cookies
+
     m3u8_url = None
 
     async with async_playwright() as p:
@@ -27,17 +32,12 @@ async def izvuci_stream(url: str):
                 "--disable-gpu",
                 "--single-process",
                 "--no-zygote",
-                "--disable-blink-features=AutomationControlled",
             ]
         )
 
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             viewport={"width": 1280, "height": 720},
-        )
-
-        await context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
 
         page = await context.new_page()
@@ -51,7 +51,7 @@ async def izvuci_stream(url: str):
         page.on("request", handle_request)
 
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(4)
+        await asyncio.sleep(5)
 
         try:
             await page.click(".jw-icon-display", timeout=3000)
@@ -62,6 +62,12 @@ async def izvuci_stream(url: str):
             if m3u8_url:
                 break
             await asyncio.sleep(1)
+
+        # 🔥 UZMI COOKIES IZ BROWSERA
+        cookies = await context.cookies()
+        session_cookies = {cookie["name"]: cookie["value"] for cookie in cookies}
+
+        print("🍪 Cookies:", session_cookies)
 
         await browser.close()
 
@@ -74,19 +80,12 @@ async def get_stream(
     type: str = "movie",
     sezona: int = 1,
     epizoda: int = 1,
-    source: str = "gledajbesplatno"
 ):
     try:
-        if source == "filmoviplex":
-            if type == "movie":
-                url = f"https://www.filmoviplex.com/film/{slug}/watching.html"
-            else:
-                url = f"https://www.filmoviplex.com/serija/{slug}/sezona/{sezona}/epizoda/{epizoda}"
+        if type == "movie":
+            url = f"https://www.gledajbesplatno.com/film/{slug}/watching.html"
         else:
-            if type == "movie":
-                url = f"https://www.gledajbesplatno.com/film/{slug}/watching.html"
-            else:
-                url = f"https://www.gledajbesplatno.com/serija/{slug}/sezona/{sezona}/epizoda/{epizoda}"
+            url = f"https://www.gledajbesplatno.com/serija/{slug}/sezona/{sezona}/epizoda/{epizoda}"
 
         print(f"🔄 Tražimo: {url}")
         m3u8_url = await izvuci_stream(url)
@@ -106,20 +105,22 @@ async def get_stream(
 @app.get("/proxy")
 async def proxy_stream(url: str):
     try:
+        global session_cookies
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "Referer": "https://arbitrarydecisions.com/",
             "Origin": "https://arbitrarydecisions.com",
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(cookies=session_cookies) as client:
             res = await client.get(url, headers=headers, timeout=30)
 
             content_type = res.headers.get(
                 "content-type", "application/vnd.apple.mpegurl"
             )
 
-            # 🔥 AKO JE M3U8 → PROXYUJ SVE SEGMENTE
+            # 🔥 M3U8 rewrite
             if "mpegurl" in content_type or ".m3u8" in url:
                 content = res.text
                 lines = content.split("\n")
@@ -136,7 +137,6 @@ async def proxy_stream(url: str):
                             f"https://parabellum-backend-uykk.onrender.com/proxy?url={encoded}"
                         )
 
-                    # 🔥 KLJUČNI FIX (TS sa tokenima)
                     elif ".m3u8" in line or ".ts" in line or ".aac" in line:
                         full_url = base_url + line
                         encoded = urllib.parse.quote(full_url, safe="")
@@ -150,19 +150,13 @@ async def proxy_stream(url: str):
                 return Response(
                     content="\n".join(new_lines),
                     media_type="application/vnd.apple.mpegurl",
-                    headers={
-                        "Access-Control-Allow-Origin": "*",
-                        "Cache-Control": "no-cache",
-                    },
+                    headers={"Access-Control-Allow-Origin": "*"},
                 )
 
-            # 🎥 VIDEO SEGMENTI (.ts)
             return Response(
                 content=res.content,
                 media_type=content_type,
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                },
+                headers={"Access-Control-Allow-Origin": "*"},
             )
 
     except Exception as e:
