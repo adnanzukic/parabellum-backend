@@ -19,6 +19,7 @@ def get_stream(url: str = Query(...)):
 
             m3u8_url = None
 
+            # 🔥 hvata sve m3u8 requestove (iz svih frame-ova)
             def handle_response(response):
                 nonlocal m3u8_url
                 if ".m3u8" in response.url and "master" in response.url:
@@ -29,16 +30,43 @@ def get_stream(url: str = Query(...)):
 
             page.goto(url, timeout=60000)
 
-            print("[INFO] Stranica učitana, pokušavam klik...")
+            print("[INFO] Tražim iframe...")
+
+            iframe = None
 
             try:
-                # pokušaj klik bilo gdje (player overlay)
-                page.mouse.click(500, 400)
+                page.wait_for_selector("iframe", timeout=10000)
+                frames = page.query_selector_all("iframe")
+
+                print(f"[INFO] Nađeno iframe-ova: {len(frames)}")
+
+                # uzmi prvi koji ima content
+                for i, frame_element in enumerate(frames):
+                    try:
+                        frame = frame_element.content_frame()
+                        if frame:
+                            iframe = frame
+                            print(f"[INFO] Koristim iframe #{i}")
+                            break
+                    except:
+                        continue
+
+            except:
+                print("[WARN] Nema iframe")
+
+            # fallback ako nema iframe
+            if not iframe:
+                iframe = page
+
+            print("[INFO] Pokušavam klik...")
+
+            try:
+                iframe.mouse.click(500, 400)
                 print("[INFO] Klik izvršen")
             except:
                 print("[WARN] Klik nije uspio")
 
-            print("[INFO] Čekam stream...")
+            print("[INFO] Čekam stream (20s)...")
             page.wait_for_timeout(20000)
 
             browser.close()
