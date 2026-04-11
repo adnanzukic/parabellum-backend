@@ -14,8 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔥 GLOBALNI STORAGE ZA COOKIES
+# 🔥 GLOBALNI COOKIES
 session_cookies = {}
+
 
 async def izvuci_stream(url: str):
     global session_cookies
@@ -32,7 +33,7 @@ async def izvuci_stream(url: str):
                 "--disable-gpu",
                 "--single-process",
                 "--no-zygote",
-            ]
+            ],
         )
 
         context = await browser.new_context(
@@ -42,28 +43,40 @@ async def izvuci_stream(url: str):
 
         page = await context.new_page()
 
-        def handle_request(request):
+        # 🔥 NAJBITNIJI FIX — RESPONSE LISTENER
+        def handle_response(response):
             nonlocal m3u8_url
-            if ".m3u8" in request.url:
-                m3u8_url = request.url
-                print("🎥 M3U8:", request.url)
+            url_res = response.url
 
-        page.on("request", handle_request)
+            if ".m3u8" in url_res:
+                print("🎥 M3U8 FOUND:", url_res)
+                m3u8_url = url_res
+
+        page.on("response", handle_response)
+
+        print("🌐 Otvaram:", url)
 
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(5)
 
+        # 🔥 čekaj da se sve učita
+        await page.wait_for_load_state("networkidle")
+
+        # 🔥 dodatno čekanje (player loading)
+        await asyncio.sleep(10)
+
+        # 🔥 pokušaj klik na play
         try:
-            await page.click(".jw-icon-display", timeout=3000)
+            await page.click(".jw-icon-display", timeout=5000)
         except:
             pass
 
-        for _ in range(25):
+        # 🔥 čekanje da se pojavi m3u8
+        for _ in range(30):
             if m3u8_url:
                 break
             await asyncio.sleep(1)
 
-        # 🔥 UZMI COOKIES IZ BROWSERA
+        # 🔥 COOKIES
         cookies = await context.cookies()
         session_cookies = {cookie["name"]: cookie["value"] for cookie in cookies}
 
@@ -88,13 +101,18 @@ async def get_stream(
             url = f"https://www.gledajbesplatno.com/serija/{slug}/sezona/{sezona}/epizoda/{epizoda}"
 
         print(f"🔄 Tražimo: {url}")
+
         m3u8_url = await izvuci_stream(url)
 
         if m3u8_url:
             encoded = urllib.parse.quote(m3u8_url, safe="")
             proxy_url = f"https://parabellum-backend-uykk.onrender.com/proxy?url={encoded}"
+
+            print("✅ PROXY:", proxy_url)
+
             return {"success": True, "url": proxy_url}
         else:
+            print("❌ NIJE PRONAĐEN STREAM")
             return {"success": False, "error": "Stream nije pronađen"}
 
     except Exception as e:
@@ -109,8 +127,8 @@ async def proxy_stream(url: str):
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Referer": "https://arbitrarydecisions.com/",
-            "Origin": "https://arbitrarydecisions.com",
+            "Referer": "https://gledajbesplatno.com/",
+            "Origin": "https://gledajbesplatno.com",
         }
 
         async with httpx.AsyncClient(cookies=session_cookies) as client:
@@ -137,7 +155,7 @@ async def proxy_stream(url: str):
                             f"https://parabellum-backend-uykk.onrender.com/proxy?url={encoded}"
                         )
 
-                    elif ".m3u8" in line or ".ts" in line or ".aac" in line:
+                    elif any(x in line for x in [".m3u8", ".ts", ".aac"]):
                         full_url = base_url + line
                         encoded = urllib.parse.quote(full_url, safe="")
                         new_lines.append(
