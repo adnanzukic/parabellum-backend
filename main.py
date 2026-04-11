@@ -29,8 +29,17 @@ def get_stream(url: str = Query(...)):
 
             page.goto(url, timeout=60000)
 
-            print("[INFO] Čekam player...")
-            page.wait_for_timeout(15000)
+            print("[INFO] Stranica učitana, pokušavam klik...")
+
+            try:
+                # pokušaj klik bilo gdje (player overlay)
+                page.mouse.click(500, 400)
+                print("[INFO] Klik izvršen")
+            except:
+                print("[WARN] Klik nije uspio")
+
+            print("[INFO] Čekam stream...")
+            page.wait_for_timeout(20000)
 
             browser.close()
 
