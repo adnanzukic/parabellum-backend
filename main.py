@@ -1,82 +1,90 @@
-from fastapi import FastAPI, Query
-from playwright.sync_api import sync_playwright
-import traceback
+import asyncio
+from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
 
 app = FastAPI()
 
-@app.get("/")
-def root():
-    return {"status": "radi"}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/get-stream")
-def get_stream(url: str = Query(...)):
+OPENSUBTITLES_API_KEY = "RqSzAupFUlPoiIaLh6dXwxdmpX2kUaPN"
+OPENSUBTITLES_BASE = "https://api.opensubtitles.com/api/v1"
+
+@app.get("/subtitles")
+async def get_subtitles(tmdb_id: int, type: str = "movie", sezona: int = 1, epizoda: int = 1):
     try:
-        print(f"[INFO] Otvaram URL: {url}")
+        headers = {
+            "Api-Key": OPENSUBTITLES_API_KEY,
+            "Content-Type": "application/json",
+            "User-Agent": "Parabellum v1.0"
+        }
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+        # Tražimo titlove — prvo srpski, pa hrvatski
+        for jezik in ["sr", "hr", "bs"]:
+            params = {
+                "tmdb_id": tmdb_id,
+                "languages": jezik,
+                "type": type,
+            }
+            if type == "episode":
+                params["season_number"] = sezona
+                params["episode_number"] = epizoda
 
-            m3u8_url = None
+            async with httpx.AsyncClient() as client:
+                res = await client.get(
+                    f"{OPENSUBTITLES_BASE}/subtitles",
+                    headers=headers,
+                    params=params,
+                    timeout=15
+                )
+                data = res.json()
 
-            # 🔥 hvata sve m3u8 requestove (iz svih frame-ova)
-            def handle_response(response):
-                nonlocal m3u8_url
-                if ".m3u8" in response.url and "master" in response.url:
-                    print(f"[FOUND] {response.url}")
-                    m3u8_url = response.url
+                if data.get("data") and len(data["data"]) > 0:
+                    # Uzmi prvi rezultat
+                    subtitle = data["data"][0]
+                    file_id = subtitle["attributes"]["files"][0]["file_id"]
 
-            page.on("response", handle_response)
+                    # Dohvati download link
+                    download_res = await client.post(
+                        f"{OPENSUBTITLES_BASE}/download",
+                        headers=headers,
+                        json={"file_id": file_id, "sub_format": "srt"}
+                    )
+                    download_data = download_res.json()
+                    download_link = download_data.get("link")
 
-            page.goto(url, timeout=60000)
+                    if download_link:
+                        return {
+                            "success": True,
+                            "url": download_link,
+                            "jezik": jezik
+                        }
 
-            print("[INFO] Tražim iframe...")
-
-            iframe = None
-
-            try:
-                page.wait_for_selector("iframe", timeout=10000)
-                frames = page.query_selector_all("iframe")
-
-                print(f"[INFO] Nađeno iframe-ova: {len(frames)}")
-
-                # uzmi prvi koji ima content
-                for i, frame_element in enumerate(frames):
-                    try:
-                        frame = frame_element.content_frame()
-                        if frame:
-                            iframe = frame
-                            print(f"[INFO] Koristim iframe #{i}")
-                            break
-                    except:
-                        continue
-
-            except:
-                print("[WARN] Nema iframe")
-
-            # fallback ako nema iframe
-            if not iframe:
-                iframe = page
-
-            print("[INFO] Pokušavam klik...")
-
-            try:
-                iframe.mouse.click(500, 400)
-                print("[INFO] Klik izvršen")
-            except:
-                print("[WARN] Klik nije uspio")
-
-            print("[INFO] Čekam stream (20s)...")
-            page.wait_for_timeout(20000)
-
-            browser.close()
-
-            if m3u8_url:
-                return {"success": True, "stream": m3u8_url}
-            else:
-                return {"success": False, "error": "Nije pronađen m3u8"}
+        return {"success": False, "error": "Titlovi nisu pronađeni"}
 
     except Exception as e:
-        print("[ERROR]")
-        traceback.print_exc()
+        print(f"Greška: {str(e)}")
         return {"success": False, "error": str(e)}
+
+@app.get("/subtitle-file")
+async def get_subtitle_file(url: str):
+    """Proxy za SRT fajl da zaobiđemo CORS"""
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=15)
+            return Response(
+                content=res.content,
+                media_type="text/plain",
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+    except Exception as e:
+        return Response(content=str(e), status_code=500)
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
