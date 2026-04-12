@@ -88,11 +88,12 @@ async def get_subtitles(tmdb_id: int, type: str = "movie", sezona: int = 1, epiz
 
             async with httpx.AsyncClient() as client:
                 res = await client.get(
-                    f"{OPENSUBTITLES_BASE}/subtitles",
-                    headers=headers,
-                    params=params,
-                    timeout=15
-                )
+                f"{OPENSUBTITLES_BASE}/subtitles",
+                headers=headers,
+                params=params,
+                timeout=15,
+                follow_redirects=True
+)
                 data = res.json()
 
                 if data.get("data") and len(data["data"]) > 0:
