@@ -1,8 +1,8 @@
-import asyncio
-import sys
-from fastapi import FastAPI
+from typing import Optional
+
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from playwright.async_api import async_playwright
+import httpx
 
 app = FastAPI()
 
@@ -13,68 +13,85 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/stream")
-async def get_stream(slug: str, type: str = "movie", sezona: int = 1, epizoda: int = 1):
+OPENSUBTITLES_API_KEY = "RqSzAupFUlPoiIaLh6dXwxdmpX2kUaPN"
+OPENSUBTITLES_BASE = "https://api.opensubtitles.com/api/v1"
+
+@app.get("/subtitles")
+async def get_subtitles(
+    tmdb_id: int,
+    type: str = "movie",
+    sezona: int = 1,
+    epizoda: int = 1,
+    jezik: Optional[str] = None,
+):
     try:
-        if type == "movie":
-            url = f"https://www.gledajbesplatno.com/film/{slug}/watching.html"
-        else:
-            url = f"https://www.gledajbesplatno.com/serija/{slug}/sezona/{sezona}/epizoda/{epizoda}"
+        headers = {
+            "Api-Key": OPENSUBTITLES_API_KEY,
+            "Content-Type": "application/json",
+            "User-Agent": "Parabellum v1.0"
+        }
 
-        m3u8_url = None
+        jezici_za_pretragu = [jezik] if (jezik and jezik.strip()) else ["sr", "hr", "bs"]
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--single-process",
-                    "--no-zygote",
-                    "--disable-blink-features=AutomationControlled",
-                ]
-            )
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 720},
-            )
+        for lang in jezici_za_pretragu:
+            params = {
+                "tmdb_id": tmdb_id,
+                "languages": lang,
+                "type": type,
+            }
+            if type == "episode":
+                params["season_number"] = sezona
+                params["episode_number"] = epizoda
 
-            await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            async with httpx.AsyncClient() as client:
+                res = await client.get(
+                    f"{OPENSUBTITLES_BASE}/subtitles",
+                    headers=headers,
+                    params=params,
+                    timeout=15
+                )
+                data = res.json()
 
-            page = await context.new_page()
+                if data.get("data") and len(data["data"]) > 0:
+                    # Uzmi prvi rezultat
+                    subtitle = data["data"][0]
+                    file_id = subtitle["attributes"]["files"][0]["file_id"]
 
-            def handle_request(request):
-                nonlocal m3u8_url
-                if "master.m3u8" in request.url:
-                    m3u8_url = request.url
+                    # Dohvati download link
+                    download_res = await client.post(
+                        f"{OPENSUBTITLES_BASE}/download",
+                        headers=headers,
+                        json={"file_id": file_id, "sub_format": "srt"}
+                    )
+                    download_data = download_res.json()
+                    download_link = download_data.get("link")
 
-            page.on("request", handle_request)
+                    if download_link:
+                        return {
+                            "success": True,
+                            "url": download_link,
+                            "jezik": lang
+                        }
 
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(4)
-
-            try:
-                await page.click(".jw-icon-display", timeout=3000)
-            except:
-                pass
-
-            for _ in range(25):
-                if m3u8_url:
-                    break
-                await asyncio.sleep(1)
-
-            await browser.close()
-
-        if m3u8_url:
-            return {"success": True, "url": m3u8_url}
-        else:
-            return {"success": False, "error": "Stream nije pronađen"}
+        return {"success": False, "error": "Titlovi nisu pronađeni"}
 
     except Exception as e:
         print(f"Greška: {str(e)}")
         return {"success": False, "error": str(e)}
+
+@app.get("/subtitle-file")
+async def get_subtitle_file(url: str):
+    """Proxy za SRT fajl da zaobiđemo CORS"""
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=15)
+            return Response(
+                content=res.content,
+                media_type="text/plain",
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+    except Exception as e:
+        return Response(content=str(e), status_code=500)
 
 @app.get("/health")
 def health():
