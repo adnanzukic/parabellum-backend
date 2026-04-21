@@ -1,3 +1,4 @@
+import asyncio
 import os
 from typing import Optional
 
@@ -22,6 +23,8 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY")
 OPENSUBTITLES_API_KEY = os.environ.get("OPENSUBTITLES_API_KEY")
 OPENSUBTITLES_BASE = "https://api.opensubtitles.com/api/v1"
 SUPABASE_BUCKET = "subtitles"
+SELF_HEALTH_URL = "https://parabellum-backend-uykk.onrender.com/health"
+SELF_PING_INTERVAL_SECONDS = 14 * 60
 
 
 def get_label(path: str) -> str:
@@ -64,6 +67,23 @@ def get_cache_candidates(tmdb_id: int, media_type: str, season: int, episode: in
 @app.get("/")
 def root():
     return {"status": "radi"}
+
+
+async def self_ping_loop():
+    while True:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
+                res = await client.get(SELF_HEALTH_URL)
+                print(f"[SELF-PING] /health status_code={res.status_code}")
+        except Exception as e:
+            print(f"[SELF-PING] error={str(e)}")
+        await asyncio.sleep(SELF_PING_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def startup_event():
+    print("[SELF-PING] Starting background self-ping task")
+    asyncio.create_task(self_ping_loop())
 
 
 @app.get("/subtitles")
@@ -167,7 +187,7 @@ async def get_subtitles_fallback(
     print(f"[FALLBACK] Cache paths to check: {cache_paths}")
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             for path in cache_paths:
                 url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{path}"
                 print(f"[FALLBACK] Cache check HEAD {url}")
@@ -214,7 +234,7 @@ async def get_subtitles_fallback(
     print(f"[FALLBACK] OpenSubtitles search type={os_type}")
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             for lang in ["sr", "hr"]:
                 params = {
                     "tmdb_id": tmdb_id,
