@@ -131,7 +131,7 @@ async def get_subtitles(
                     download_res = await client.post(
                         f"{OPENSUBTITLES_BASE}/download",
                         headers=headers,
-                        json={"file_id": file_id}
+                        json={"file_id": file_id, "dev_mode": True}
                     )
                     download_data = download_res.json()
                     download_link = download_data.get("link")
@@ -307,7 +307,7 @@ async def get_subtitles_fallback(
                     download_res = await client.post(
                         f"{OPENSUBTITLES_BASE}/download",
                         headers=headers,
-                        json={"file_id": file_id},
+                        json={"file_id": file_id, "dev_mode": True},
                         timeout=15,
                     )
                     print(
