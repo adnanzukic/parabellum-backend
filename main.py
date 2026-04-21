@@ -335,7 +335,11 @@ async def get_subtitles_fallback(
                         )
                         continue
 
-                    srt_res = await client.get(download_link, timeout=20)
+                    srt_res = await client.get(
+                        download_link,
+                        headers=headers,
+                        timeout=20,
+                    )
                     print(
                         f"[FALLBACK] SRT fetch lang={lang} idx={idx} "
                         f"status_code={srt_res.status_code}"
