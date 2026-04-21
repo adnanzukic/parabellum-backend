@@ -77,7 +77,7 @@ def call_subtitles_fallback(params: Dict, context_label: str) -> bool:
         subtitles_count = len(data) if isinstance(data, list) else 0
         print(
             f"[RES] {context_label} status={response.status_code} subtitles={subtitles_count} "
-            "source=unknown (endpoint trenutno ne vraća cache/new indikator)"
+            "source=unknown (endpoint trenutno ne vraca cache/new indikator)"
         )
         return response.status_code == 200
     except Exception as exc:
@@ -91,7 +91,7 @@ def run_bulk_cache_warmup() -> None:
 
     print("[START] Dohvat western filmova i serija sa TMDB (vote_count.gte=100).")
     titles = collect_western_titles(max_items_per_type=20)
-    print(f"[INFO] Ukupno dohvaćenih naslova: {len(titles)}")
+    print(f"[INFO] Ukupno dohvacenih naslova: {len(titles)}")
 
     total_requests = 0
     successful_requests = 0
@@ -135,8 +135,8 @@ def run_bulk_cache_warmup() -> None:
                 break
 
     print(
-        f"[DONE] Završeno. Ukupno requesta: {total_requests}, "
-        f"uspješnih: {successful_requests}, neuspješnih: {total_requests - successful_requests}"
+        f"[DONE] Zavrseno. Ukupno requesta: {total_requests}, "
+        f"uspjesnih: {successful_requests}, neuspjesnih: {total_requests - successful_requests}"
     )
 
 
