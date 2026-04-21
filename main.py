@@ -182,34 +182,25 @@ async def get_subtitles_fallback(
         print("[FALLBACK] SUPABASE_URL missing. Returning []")
         return []
 
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_KEY else None
     cache_paths = get_cache_candidates(tmdb_id, type, season, episode)
     cached_results: list[dict] = []
     print(f"[FALLBACK] Cache paths to check: {cache_paths}")
 
-    try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            for path in cache_paths:
-                url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{path}"
-                print(f"[FALLBACK] Cache check GET(range) {url}")
-                try:
-                    r = await client.get(
-                        url,
-                        headers={"Range": "bytes=0-0"},
-                        timeout=8,
-                    )
-                    if r.status_code in (200, 206):
-                        print(f"[FALLBACK] Cache HIT path={path}")
-                        cached_results.append({"file": url, "label": get_label(path)})
-                    else:
-                        print(
-                            f"[FALLBACK] Cache MISS path={path} status_code={r.status_code}"
-                        )
-                except Exception:
-                    print(f"[FALLBACK] Cache check error path={path}")
-                    continue
-    except Exception:
-        print("[FALLBACK] Cache phase failed due to client-level exception")
-        pass
+    for path in cache_paths:
+        url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{path}"
+        if not supabase:
+            print(
+                f"[FALLBACK] Cache MISS path={path} reason=SUPABASE_SECRET_KEY missing"
+            )
+            continue
+        try:
+            # Use storage API directly to avoid false negatives from public URL checks.
+            supabase.storage.from_(SUPABASE_BUCKET).download(path)
+            print(f"[FALLBACK] Cache HIT path={path}")
+            cached_results.append({"file": url, "label": get_label(path)})
+        except Exception as e:
+            print(f"[FALLBACK] Cache MISS path={path} error={str(e)}")
 
     if cached_results:
         print(
@@ -225,7 +216,6 @@ async def get_subtitles_fallback(
         )
         return []
 
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     uploaded_results: list[dict] = []
 
     headers = {
