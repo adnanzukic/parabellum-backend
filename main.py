@@ -190,10 +190,14 @@ async def get_subtitles_fallback(
         async with httpx.AsyncClient(follow_redirects=True) as client:
             for path in cache_paths:
                 url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{path}"
-                print(f"[FALLBACK] Cache check HEAD {url}")
+                print(f"[FALLBACK] Cache check GET(range) {url}")
                 try:
-                    r = await client.head(url, timeout=8)
-                    if r.status_code == 200:
+                    r = await client.get(
+                        url,
+                        headers={"Range": "bytes=0-0"},
+                        timeout=8,
+                    )
+                    if r.status_code in (200, 206):
                         print(f"[FALLBACK] Cache HIT path={path}")
                         cached_results.append({"file": url, "label": get_label(path)})
                     else:
@@ -304,12 +308,22 @@ async def get_subtitles_fallback(
                         f"file_id={file_id} download_count={download_count}"
                     )
 
+                    download_payload = {"file_id": file_id}
                     download_res = await client.post(
                         f"{OPENSUBTITLES_BASE}/download",
                         headers=headers,
-                        json={"file_id": file_id, "dev_mode": True},
+                        json=download_payload,
                         timeout=15,
                     )
+                    if download_res.status_code == 406:
+                        # Some accounts/endpoints still expect the legacy dev_mode flag.
+                        download_payload["dev_mode"] = True
+                        download_res = await client.post(
+                            f"{OPENSUBTITLES_BASE}/download",
+                            headers=headers,
+                            json=download_payload,
+                            timeout=15,
+                        )
                     print(
                         f"[FALLBACK] Download link request lang={lang} idx={idx} "
                         f"file_id={file_id} status_code={download_res.status_code}"
@@ -321,9 +335,10 @@ async def get_subtitles_fallback(
                         )
                         return cached_results
                     if download_res.status_code != 200:
+                        response_preview = (download_res.text or "")[:300]
                         print(
                             f"[FALLBACK] Skipping lang={lang} idx={idx} due to "
-                            "non-200 download response"
+                            f"non-200 download response body={response_preview}"
                         )
                         continue
 
